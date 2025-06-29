@@ -1,5 +1,3 @@
-use signal_hook::low_level::signal_name;
-use signal_hook::{consts::SIGINT, consts::SIGTERM, iterator::Signals};
 use std::sync::Arc;
 use tokio::sync::Notify;
 use tracing::info;
@@ -53,10 +51,9 @@ pub fn clean_message(text: &str) -> String {
 /// This function does not explicitly panic, but improper manipulation of indices or unmatched
 /// braces could lead to unintended behavior.
 ///
-/// # Errors in Current Code:
-/// - There is a bug in the code where `arguments.push(*slice)` is used. The dereference operator
-///   (`*`) is invalid for string slices. It should be `arguments.push(slice)`.
-/// - Recommend fixing this bug by removing the dereference operator for proper functionality.
+/// # Implementation Notes:
+/// - This function correctly handles string slices without unnecessary dereferencing.
+/// - Whitespace trimming is applied to each argument to ensure clean parsing.
 pub fn parse_arguments(input: &str) -> Vec<&str> {
     let mut arguments = Vec::new();
     let mut start = 0;
@@ -68,9 +65,9 @@ pub fn parse_arguments(input: &str) -> Vec<&str> {
             '}' => in_brackets -= 1,
             ',' if in_brackets == 0 => {
                 // Outside of brackets, treat comma as a delimiter
-                let slice = &input[start..i].trim();
+                let slice = input[start..i].trim();
                 if !slice.is_empty() {
-                    arguments.push(*slice); // Dereference slice here
+                    arguments.push(slice);
                 }
                 start = i + 1;
             }
@@ -80,41 +77,45 @@ pub fn parse_arguments(input: &str) -> Vec<&str> {
 
     // Push the final argument if it's not empty
     if start < input.len() {
-        let slice = &input[start..].trim();
+        let slice = input[start..].trim();
         if !slice.is_empty() {
-            arguments.push(*slice); // Dereference slice here
+            arguments.push(slice);
         }
     }
 
     arguments
 }
 
-/// Sets up a signal hook for SIGINT and SIGTERM.
+/// Sets up a cross-platform signal handler for termination signals.
 ///
-/// Creates a signal hook for the specified signals and spawns a thread to handle them.
-/// When a signal is received, it logs the signal name and performs cleanup before exiting with 0 code
-/// to indicate orderly shutdown.
+/// Creates a signal handler that works on both Unix (SIGINT/SIGTERM) and Windows (Ctrl+C/Ctrl+Break).
+/// When a termination signal is received, it logs the event and notifies the shutdown signal.
 ///
 /// # Arguments
 ///
-/// * `full_path` - The full path to the application configuration file.
+/// * `shutdown_signal` - An Arc<Notify> that will be notified when a termination signal is received.
 ///
 /// # Panics
 ///
-/// The function panics if it fails to create the signal iterator.
+/// The function panics if it fails to set up the signal handler.
+///
+/// # Platform Support
+///
+/// - **Unix/Linux**: Handles SIGINT and SIGTERM signals
+/// - **Windows**: Handles Ctrl+C and Ctrl+Break events
 ///
 pub async fn setup_signal_hook(shutdown_signal: Arc<Notify>) {
-    // Create a signal set of signals to be handled and a signal iterator to monitor them.
-    let signals = &[SIGINT, SIGTERM];
-    let mut signals_iterator = Signals::new(signals).expect("Failed to create signal iterator");
-
-    // Create a new thread to handle signals sent to the process
-    tokio::spawn(async move {
-        if let Some(signal) = signals_iterator.forever().next() {
-            info!("Received signal: {}", signal_name(signal).unwrap());
-            shutdown_signal.notify_one();
-        }
-    });
+    // Use ctrlc crate for cross-platform signal handling
+    let shutdown_clone = Arc::clone(&shutdown_signal);
+    
+    // Set up the signal handler - this works on both Unix and Windows
+    ctrlc::set_handler(move || {
+        info!("Received termination signal, initiating graceful shutdown...");
+        shutdown_clone.notify_one();
+    })
+    .expect("Failed to set up signal handler");
+    
+    info!("Cross-platform signal handler initialized successfully");
 }
 
 #[cfg(test)]
