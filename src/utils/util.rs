@@ -114,8 +114,6 @@ pub async fn setup_signal_hook(shutdown_signal: Arc<Notify>) {
         shutdown_clone.notify_one();
     })
     .expect("Failed to set up signal handler");
-    
-    info!("Cross-platform signal handler initialized successfully");
 }
 
 #[cfg(test)]
